@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-BLE Throughput Testing Tool
+BLE GATT Throughput Testing Tool
 
 Tests data transfer rates with Zephyr BLE devices using Nordic UART Service (NUS).
+Supports TX, echo (round-trip latency), and burst transfer tests.
 """
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import asyncio
 import argparse
@@ -15,10 +20,7 @@ from typing import Optional
 from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
 
-# Nordic UART Service UUIDs
-NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
-NUS_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # Write to device
-NUS_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # Notify from device
+from ble.uuids import NUS_SERVICE_UUID, NUS_RX_CHAR_UUID, NUS_TX_CHAR_UUID
 
 
 @dataclass
@@ -50,6 +52,26 @@ class ThroughputStats:
     def avg_latency(self) -> float:
         """Returns average round-trip latency in ms."""
         return statistics.mean(self.latencies) * 1000 if self.latencies else 0
+
+    def to_dict(self) -> dict:
+        """Return structured results."""
+        elapsed = self.elapsed()
+        result = {
+            "duration_s": round(elapsed, 2),
+            "bytes_sent": self.bytes_sent,
+            "bytes_received": self.bytes_received,
+            "packets_sent": self.packets_sent,
+            "packets_received": self.packets_received,
+            "tx_throughput_bps": round(self.tx_throughput(), 2),
+            "rx_throughput_bps": round(self.rx_throughput(), 2),
+            "tx_throughput_kbps": round(self.tx_throughput() * 8 / 1000, 2),
+            "rx_throughput_kbps": round(self.rx_throughput() * 8 / 1000, 2),
+        }
+        if self.latencies:
+            result["avg_latency_ms"] = round(self.avg_latency(), 2)
+            result["min_latency_ms"] = round(min(self.latencies) * 1000, 2)
+            result["max_latency_ms"] = round(max(self.latencies) * 1000, 2)
+        return result
 
     def report(self):
         elapsed = self.elapsed()
@@ -89,7 +111,6 @@ class BLEThroughputTester:
 
         nus_devices = []
         for d in devices:
-            # Check if device advertises NUS service
             if d.name and ("NUS" in d.name.upper() or
                           "BLE" in d.name.upper() or
                           "DATA" in d.name.upper() or
@@ -119,7 +140,6 @@ class BLEThroughputTester:
                 print(f"Device '{self.device_name}' not found")
                 return False
         else:
-            # Scan and use first device
             devices = await self.scan()
             if devices:
                 device = devices[0]
@@ -132,7 +152,6 @@ class BLEThroughputTester:
         await self.client.connect()
         print(f"Connected: {self.client.is_connected}")
 
-        # Subscribe to TX notifications
         await self.client.start_notify(NUS_TX_CHAR_UUID, self._on_notify)
         print("Subscribed to NUS TX notifications")
 
@@ -172,7 +191,6 @@ class BLEThroughputTester:
         """Run transmit-only throughput test."""
         print(f"\nRunning TX test: {duration}s, {packet_size} byte packets")
 
-        # Create test data pattern
         data = bytes([i % 256 for i in range(packet_size)])
 
         self.stats = ThroughputStats()
@@ -180,7 +198,7 @@ class BLEThroughputTester:
 
         while self.stats.elapsed() < duration:
             await self.send(data)
-            await asyncio.sleep(0.001)  # Small delay to prevent buffer overflow
+            await asyncio.sleep(0.001)
 
         self.stats.report()
 
@@ -188,7 +206,6 @@ class BLEThroughputTester:
         """Run echo (round-trip) latency test."""
         print(f"\nRunning echo test: {duration}s, {packet_size} byte packets")
 
-        # Create test data
         data = bytes([i % 256 for i in range(packet_size)])
 
         self.stats = ThroughputStats()
@@ -206,7 +223,7 @@ class BLEThroughputTester:
                 print("  Echo timeout")
                 self._pending_echo = None
 
-            await asyncio.sleep(0.01)  # Inter-packet delay
+            await asyncio.sleep(0.01)
 
         self.stats.report()
 
@@ -231,8 +248,8 @@ class BLEThroughputTester:
         self.stats.report()
 
 
-async def main():
-    parser = argparse.ArgumentParser(description="BLE Throughput Testing Tool")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="BLE GATT Throughput Testing Tool")
     parser.add_argument("--scan", action="store_true", help="Scan for devices only")
     parser.add_argument("--name", type=str, help="Device name to connect to")
     parser.add_argument("--addr", type=str, help="Device address to connect to")
@@ -244,8 +261,11 @@ async def main():
                         help="Packet size in bytes (max ~240 for BLE)")
     parser.add_argument("--packets", type=int, default=100,
                         help="Number of packets for burst test")
+    return parser
 
-    args = parser.parse_args()
+
+async def main():
+    args = build_parser().parse_args()
 
     tester = BLEThroughputTester(device_name=args.name, device_addr=args.addr)
 

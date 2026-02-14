@@ -1,92 +1,154 @@
 # Test Tools
 
-Testing, validation, and utility tools for embedded development workflows.
+Testing and measurement tools for embedded BLE and power development.
 
-> **Note:** This folder is named `test-tools/` to avoid collision with west's `tools/` folder (EDTT, net-tools, etc.).
+> **Note:** Named `test-tools/` to avoid collision with west's `tools/` directory.
 
 ## Prerequisites
 
-Ensure the virtual environment is activated:
 ```bash
-cd /path/to/workspace
+# Activate the project venv
 source zephyr-apps/.venv/bin/activate
+
+# Install dependencies
+pip install bleak ppk2-api pytest
+# macOS L2CAP support:
+pip install pyobjc-framework-CoreBluetooth
 ```
 
-## BLE Throughput Tester
+## BLE Tools
 
-A Python tool for testing BLE throughput with devices using Nordic UART Service (NUS).
+### GATT Throughput (`ble.gatt_throughput`)
 
-### Features
-
-- **Device scanning**: Find BLE devices in range
-- **TX throughput**: Measure sustained write performance
-- **Echo latency**: Round-trip timing with echo responses
-- **Burst transfers**: Packet burst testing with statistics
-
-### Usage
+Tests TX, echo latency, and burst throughput using Nordic UART Service (NUS).
 
 ```bash
-# Scan for BLE devices
-python test-tools/ble_throughput.py --scan
-
-# Connect by device name and run all tests
-python test-tools/ble_throughput.py --name "BLE Data Transfer" --test all
-
-# Connect by MAC address and run specific test
-python test-tools/ble_throughput.py --addr "AA:BB:CC:DD:EE:FF" --test echo
-
-# TX test with custom parameters
-python test-tools/ble_throughput.py --name "BLE Data Transfer" --test tx --duration 30 --size 200
-
-# Burst test
-python test-tools/ble_throughput.py --name "BLE Data Transfer" --test burst --packets 500 --size 100
+python3 -m ble.gatt_throughput --scan
+python3 -m ble.gatt_throughput --name "BLE Data Transfer" --test all
+python3 -m ble.gatt_throughput --name "MyDevice" --test echo --duration 30
+python3 -m ble.gatt_throughput --addr "AA:BB:CC:DD:EE:FF" --test tx --size 200
 ```
-
-### Options
 
 | Option | Description |
 |--------|-------------|
-| `--scan` | Scan for BLE devices only |
+| `--scan` | Scan for devices only |
 | `--name NAME` | Device name to connect to |
-| `--addr ADDR` | Device MAC address to connect to |
-| `--test {tx,echo,burst,all}` | Test type to run (default: all) |
-| `--duration SECS` | Test duration in seconds (default: 10) |
-| `--size BYTES` | Packet size in bytes (default: 20, max ~240) |
-| `--packets NUM` | Number of packets for burst test (default: 100) |
+| `--addr ADDR` | Device MAC address |
+| `--test {tx,echo,burst,all}` | Test type (default: all) |
+| `--duration SECS` | Duration in seconds (default: 10) |
+| `--size BYTES` | Packet size (default: 20, max ~240) |
+| `--packets NUM` | Burst packet count (default: 100) |
 
-### Example Output
+### Notification Throughput (`ble.notification_throughput`)
 
-```
-==================================================
-THROUGHPUT TEST RESULTS
-==================================================
-Duration:        10.05 sec
-Packets sent:    892
-Packets recv:    891
-Bytes sent:      17,840
-Bytes received:  22,275
-TX throughput:   1775.12 B/s (14.20 kbit/s)
-RX throughput:   2216.42 B/s (17.73 kbit/s)
-Avg latency:     11.24 ms
-Min latency:     8.12 ms
-Max latency:     45.67 ms
-==================================================
+Bidirectional BLE throughput with independent rate control for host and device. Supports RISC-V workload configuration on dual-core firmware.
+
+```bash
+python3 -m ble.notification_throughput
+python3 -m ble.notification_throughput --mac-tx 100 --device-tx 50
+python3 -m ble.notification_throughput --name nRF54L15_Dual --workload 6
+python3 -m ble.notification_throughput --mac-tx 0 --device-tx 50  # RX only
 ```
 
-### Troubleshooting
+| Option | Description |
+|--------|-------------|
+| `--name NAME` | Device name (default: nRF54L15_Test) |
+| `--mac-tx KBPS` | Host TX rate (0=disabled, omit=max) |
+| `--device-tx KBPS` | Device TX rate (0=disabled, omit=max) |
+| `--workload 0-13` | RISC-V workload (0=Idle...13=Full Necklace) |
+| `--packet-size BYTES` | Packet size (default: 495) |
+| `--scan-timeout SECS` | Scan timeout (default: 10) |
+
+### L2CAP Throughput (`ble.l2cap_throughput`)
+
+L2CAP Connection-Oriented Channel throughput via CoreBluetooth. **macOS only.**
+
+```bash
+python3 -m ble.l2cap_throughput
+python3 -m ble.l2cap_throughput --name nRF54L15_Test --duration 30
+```
+
+| Option | Description |
+|--------|-------------|
+| `--name NAME` | Device name (default: nRF54L15_Test) |
+| `--duration SECS` | Duration (0=run forever) |
+| `--scan-timeout SECS` | Scan timeout (default: 15) |
+
+## Power Tools
+
+All power tools require a Nordic PPK2 connected via USB.
+
+### Single Test (`power.single_test`)
+
+One-shot BLE throughput + PPK2 power measurement.
+
+```bash
+python3 -m power.single_test --ppk2-port /dev/tty.usbmodemXXXX
+python3 -m power.single_test --ppk2-port /dev/tty.usbmodemXXXX --duration 60 --voltage 3300
+```
+
+| Option | Description |
+|--------|-------------|
+| `--ppk2-port PORT` | **Required.** PPK2 serial port |
+| `--name NAME` | Device name (default: nRF54L15_Test) |
+| `--voltage MV` | Source voltage in mV (default: 4000) |
+| `--duration SECS` | Measurement duration (default: 30) |
+| `--settle-time SECS` | Pre-measurement settle (default: 5) |
+| `--boot-wait SECS` | Device boot wait (default: 4) |
+| `--scan-timeout SECS` | BLE scan timeout (default: 10) |
+
+### Batch Test (`power.batch_test`)
+
+Multiple consecutive runs with resume support and JSON export.
+
+```bash
+python3 -m power.batch_test --ppk2-port /dev/tty.usbmodemXXXX
+python3 -m power.batch_test --ppk2-port /dev/tty.usbmodemXXXX --num-runs 5 --duration 60
+```
+
+| Option | Description |
+|--------|-------------|
+| `--ppk2-port PORT` | **Required.** PPK2 serial port |
+| `--name NAME` | Device name (default: nRF54L15_Test) |
+| `--voltage MV` | Source voltage (default: 4000) |
+| `--duration SECS` | Per-run duration (default: 300) |
+| `--settle-time SECS` | Settle time (default: 10) |
+| `--num-runs N` | Number of runs (default: 10) |
+| `--output FILE` | Output JSON file (default: power_throughput_raw.json) |
+| `--scan-timeout SECS` | BLE scan timeout (default: 15) |
+
+### Analysis (`power.analysis`)
+
+Analyze batch test results: per-run stats, aggregates, time series.
+
+```bash
+python3 -m power.analysis --input power_throughput_raw.json
+python3 -m power.analysis --input results.json --steady-state 20
+```
+
+| Option | Description |
+|--------|-------------|
+| `--input FILE` | Input JSON file (default: power_throughput_raw.json) |
+| `--steady-state SECS` | Ramp-up exclusion period (default: 15) |
+
+## Running Tests
+
+```bash
+cd test-tools
+python3 -m pytest tests/ -v
+```
+
+## Troubleshooting
 
 **Device not found:**
 - Ensure device is powered and advertising
 - Check no other app is connected to it
 - On macOS, grant Bluetooth permissions to Terminal
 
-**Connection fails:**
-- Move closer to the device
-- Try scanning first to verify device is visible
-- Check device firmware is running correctly
+**PPK2 connection issues:**
+- Find port: `ls /dev/tty.usbmodem*`
+- Ensure no other app (nRF Connect Power Profiler) is using the PPK2
+- Try unplugging and reconnecting
 
-## Planned Tools
-
-- **WiFi throughput tester**: Test WiFi data rates and reliability
-- **Hardware validation**: GPIO, I2C, SPI peripheral testing
-- **Power profiling**: Current consumption analysis
+**L2CAP test fails to import:**
+- macOS only; requires `pip install pyobjc-framework-CoreBluetooth`

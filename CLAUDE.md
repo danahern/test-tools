@@ -1,48 +1,55 @@
-# Test Tools Directory
+# Test Tools
 
-Testing, validation, and utility tools for embedded development.
+Testing and measurement tools for embedded BLE and power development.
 
-> **Note:** This folder is named `test-tools/` to avoid collision with west's `tools/` folder (which contains EDTT, net-tools, etc.).
+## Structure
 
-## Available Tools
-
-### ble_throughput.py
-
-BLE throughput testing tool for Nordic UART Service (NUS) devices.
-
-**Capabilities:**
-- Scan for BLE devices
-- TX throughput testing (sustained writes)
-- Echo latency testing (round-trip timing)
-- Burst transfer testing
-- Detailed statistics reporting
-
-**Usage:**
-```bash
-# Activate venv first
-source zephyr-apps/.venv/bin/activate
-
-# Scan for devices
-python test-tools/ble_throughput.py --scan
-
-# Run all tests against a device
-python test-tools/ble_throughput.py --name "BLE WiFi Bridge" --test all
-
-# Run specific test
-python test-tools/ble_throughput.py --name "BLE Data Transfer" --test echo
 ```
+test-tools/
+├── ble/                        # BLE testing tools
+│   ├── uuids.py                # Shared UUID constants
+│   ├── gatt_throughput.py      # NUS write/echo/burst tests
+│   ├── notification_throughput.py  # Bidirectional rate-controlled throughput
+│   └── l2cap_throughput.py     # L2CAP CoC throughput (macOS only)
+├── power/                      # Power measurement tools
+│   ├── ppk2_utils.py           # Shared PPK2 init and sampling
+│   ├── single_test.py          # Single throughput + power run
+│   ├── batch_test.py           # N runs with resume + JSON export
+│   └── analysis.py             # Analyze batch results
+└── tests/                      # Unit tests
+    ├── test_uuids.py
+    ├── test_throughput_stats.py
+    ├── test_power_analysis.py
+    └── test_argparse.py
+```
+
+## Conventions
+
+- Python 3.11+
+- All tools use `argparse` with `build_parser()` exposed for testing
+- Class-based tools with structured `to_dict()` / `get_results()` returns
+- Run from test-tools/: `python3 -m ble.gatt_throughput --help`
+- Run tests: `python3 -m pytest tests/ -v`
+
+## Dependencies
+
+- **bleak**: BLE tools (gatt_throughput, notification_throughput, single_test, batch_test)
+- **pyobjc-framework-CoreBluetooth**: l2cap_throughput (macOS only)
+- **ppk2-api**: power tools (single_test, batch_test)
+- **pyserial**: batch_test (PPK2 serial reset)
+- **pytest**: tests
 
 ## Adding New Tools
 
-When adding tools to this directory:
+1. Place in the appropriate category directory (ble/, power/, or create new)
+2. Add `sys.path.insert(0, str(Path(__file__).parent.parent))` for imports
+3. Use `build_parser()` returning ArgumentParser
+4. Add a class with structured return method (`to_dict()` or similar)
+5. Add tests in tests/
+6. Guard optional dependencies with try/except ImportError
+7. Update README.md
 
-1. Use Python 3.11+ (matches project .python-version)
-2. Add dependencies to zephyr-apps/requirements.txt
-3. Include argparse CLI with --help
-4. Document in this file and README.md
+## Future Categories
 
-## Tool Categories
-
-- **BLE Testing**: ble_throughput.py
-- **WiFi Testing**: (planned)
-- **Hardware Validation**: (planned)
+- **WiFi Testing**: WiFi throughput, reliability, and range testing
+- **Hardware Validation**: GPIO, I2C, SPI peripheral testing
