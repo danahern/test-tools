@@ -116,7 +116,7 @@ def run_download(sock: socket.socket, duration: float, block_size: int) -> dict:
 def run_echo(sock: socket.socket, duration: float, block_size: int) -> dict:
     """Send and receive (echo mode) for round-trip throughput."""
     sock.sendall(bytes([CMD_ECHO]))
-    sock.settimeout(2.0)
+    sock.settimeout(5.0)
     send_data = bytes(block_size)
     stats = []
     start = time.monotonic()
@@ -219,6 +219,7 @@ examples:
         print(f"Connection failed: {e}")
         sys.exit(1)
 
+    sock.settimeout(None)  # Remove connect timeout for data transfer
     print(f"Connected. Running {args.mode} test for {args.duration}s...")
 
     modes = {

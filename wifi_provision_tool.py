@@ -93,21 +93,48 @@ def decode_status(data: bytes) -> dict:
     }
 
 
+async def find_device(address=None, timeout=5.0):
+    """Scan for a WiFi provisioning device. Returns BLEDevice or raises."""
+    devices = await BleakScanner.discover(
+        timeout=timeout,
+        service_uuids=[UUID_SVC],
+        return_adv=True,
+    )
+    if not devices:
+        print("No WiFi provisioning devices found.")
+        sys.exit(1)
+
+    if address:
+        for d, adv in devices.values():
+            if d.address.lower() == address.lower():
+                return d
+        print(f"Device {address} not found. Available:")
+        for d, adv in devices.values():
+            print(f"  {d.name or 'Unknown'} ({d.address})")
+        sys.exit(1)
+
+    # No address specified — use first device found
+    d, adv = next(iter(devices.values()))
+    print(f"Found: {d.name or 'Unknown'} ({d.address}, {adv.rssi} dBm)")
+    return d
+
+
 async def cmd_discover(args):
     """Discover devices advertising the WiFi provisioning service."""
     print(f"Scanning for BLE devices ({args.timeout}s)...")
     devices = await BleakScanner.discover(
         timeout=args.timeout,
         service_uuids=[UUID_SVC],
+        return_adv=True,
     )
     if not devices:
         print("No WiFi provisioning devices found.")
         return
     print(f"\nFound {len(devices)} device(s):\n")
-    for d in devices:
+    for d, adv in devices.values():
         print(f"  {d.name or 'Unknown'}")
         print(f"    Address: {d.address}")
-        print(f"    RSSI:    {d.rssi} dBm")
+        print(f"    RSSI:    {adv.rssi} dBm")
         print()
 
 
@@ -120,8 +147,9 @@ async def cmd_scan_aps(args):
         if result:
             results.append(result)
 
-    async with BleakClient(args.address) as client:
-        print(f"Connected to {args.address}")
+    device = await find_device(args.address)
+    async with BleakClient(device) as client:
+        print(f"Connected to {device.address}")
         await client.start_notify(UUID_SCAN_RES, on_scan_result)
         print("Triggering WiFi scan...")
         await client.write_gatt_char(UUID_SCAN_TRIG, b"\x01")
@@ -156,11 +184,12 @@ async def cmd_provision(args):
         s = decode_status(bytes(data))
         if s:
             final_status.update(s)
-            if s["state"] in ("CONNECTED", "IDLE"):
+            if s["state"] == "CONNECTED":
                 status_event.set()
 
-    async with BleakClient(args.address) as client:
-        print(f"Connected to {args.address}")
+    device = await find_device(args.address)
+    async with BleakClient(device) as client:
+        print(f"Connected to {device.address}")
         await client.start_notify(UUID_STATUS, on_status)
 
         cred = encode_credentials(args.ssid, args.psk, security)
@@ -183,8 +212,9 @@ async def cmd_provision(args):
 
 async def cmd_status(args):
     """Query device status."""
-    async with BleakClient(args.address) as client:
-        print(f"Connected to {args.address}")
+    device = await find_device(args.address)
+    async with BleakClient(device) as client:
+        print(f"Connected to {device.address}")
         data = await client.read_gatt_char(UUID_STATUS)
         status = decode_status(bytes(data))
         if status:
@@ -196,10 +226,15 @@ async def cmd_status(args):
 
 async def cmd_factory_reset(args):
     """Trigger factory reset."""
-    async with BleakClient(args.address) as client:
-        print(f"Connected to {args.address}")
+    device = await find_device(args.address)
+    async with BleakClient(device) as client:
+        print(f"Connected to {device.address}")
         print("Sending factory reset...")
-        await client.write_gatt_char(UUID_RESET, b"\xff")
+        try:
+            await client.write_gatt_char(UUID_RESET, b"\xff")
+        except Exception:
+            # Device may disconnect before write response — expected
+            pass
         print("Factory reset sent.")
 
 
@@ -216,16 +251,18 @@ def main():
 
     # scan-aps
     p = sub.add_parser("scan-aps", help="Trigger WiFi AP scan")
-    p.add_argument("address", help="BLE device address")
+    p.add_argument("address", nargs="?", default=None, help="BLE device address (auto-detect if omitted)")
     p.add_argument(
         "-t", "--timeout", type=float, default=10.0, help="Wait time for results (s)"
     )
 
     # provision
     p = sub.add_parser("provision", help="Send WiFi credentials")
-    p.add_argument("address", help="BLE device address")
     p.add_argument("ssid", help="WiFi SSID")
     p.add_argument("psk", help="WiFi password")
+    p.add_argument(
+        "-a", "--address", default=None, help="BLE device address (auto-detect if omitted)"
+    )
     p.add_argument(
         "-s",
         "--security",
@@ -239,11 +276,11 @@ def main():
 
     # status
     p = sub.add_parser("status", help="Query device status")
-    p.add_argument("address", help="BLE device address")
+    p.add_argument("address", nargs="?", default=None, help="BLE device address (auto-detect if omitted)")
 
     # factory-reset
     p = sub.add_parser("factory-reset", help="Factory reset device")
-    p.add_argument("address", help="BLE device address")
+    p.add_argument("address", nargs="?", default=None, help="BLE device address (auto-detect if omitted)")
 
     args = parser.parse_args()
 
